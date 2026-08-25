@@ -625,6 +625,9 @@
     <string name="reminder_default_text">Time to weight</string>
     <string name="reminder_channel_name">Reminders</string>
     <string name="reminder_notification_title">openScale</string>
+    <string name="trackapp_sync_channel_name">trackapp sync</string>
+    <string name="trackapp_sync_success">Measurement synced to trackapp</string>
+    <string name="trackapp_sync_failure">Could not sync measurement to trackapp</string>
     <string name="settings_reminder_days_label">Days</string>
     <string name="permission_denied">Notifications permission denied</string>
     <string name="settings_appearance_title">Appearance</string>

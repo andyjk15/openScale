@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Default (release/beta/oss): system defaults apply, i.e. cleartext HTTP is
+  refused (Android 9+/API 28+ behaviour). A real trackapp deployment is
+  expected to sit behind HTTPS (e.g. a Cloudflare Tunnel), so this build type
+  needs no exception at all.
+
+  See src/debug/res/xml/network_security_config.xml for the debug only
+  override that permits cleartext, purely so TrackAppSyncUseCase can be
+  tested against a plain http local dev server during development.
+-->
+<network-security-config />

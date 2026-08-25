@@ -45,6 +45,7 @@ class MeasurementCrudUseCases @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val settingsFacade: SettingsFacade,
     private val sync: SyncUseCases,
+    private val trackAppSync: TrackAppSyncUseCase,
     private val transformation: MeasurementTransformationUseCase,
     private val databaseRepository: DatabaseRepository
     ) {
@@ -88,6 +89,7 @@ class MeasurementCrudUseCases @Inject constructor(
             sync.triggerSyncInsert(measurementWithId, finalValues,"com.health.openscale.sync")
             sync.triggerSyncInsert(measurementWithId, finalValues,"com.health.openscale.sync.oss")
             sync.triggerSyncInsert(measurementWithId, finalValues,"com.health.openscale.sync.debug")
+            trackAppSync.pushAsync(measurementWithId, finalValues)
 
             MeasurementWidget.refreshAll(appContext)
 

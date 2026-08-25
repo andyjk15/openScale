@@ -94,6 +94,20 @@ android {
         configureEach {
             buildConfigField("String", "GIT_SHA", "\"${gitSha()}\"")
             buildConfigField("String", "BUILD_TIME_UTC", "\"${buildTimeUtc()}\"")
+
+            // Personal trackapp sync target -- same pattern as the keystore properties above:
+            // a file one level above the repo root, never committed. Empty strings when the
+            // file is absent, which TrackAppSyncUseCase treats as "not configured" rather than
+            // a crash, so a normal upstream build/PR is unaffected.
+            val trackAppPropertiesFile = rootProject.file("../../trackapp.properties")
+            val trackAppProperties = Properties()
+            try {
+                FileInputStream(trackAppPropertiesFile).use { fis -> trackAppProperties.load(fis) }
+            } catch (_: FileNotFoundException) {
+                project.logger.warn("trackapp.properties not found: ${trackAppPropertiesFile.absolutePath}. TrackApp sync will be disabled.")
+            }
+            buildConfigField("String", "TRACKAPP_BASE_URL", "\"${trackAppProperties.getProperty("baseUrl", "")}\"")
+            buildConfigField("String", "TRACKAPP_DEVICE_TOKEN", "\"${trackAppProperties.getProperty("deviceToken", "")}\"")
         }
 
         debug {
