@@ -101,6 +101,13 @@ import kotlin.math.roundToInt
  * and a "skeletal mass" distinct from skeletal muscle mass are not attempted at all: those
  * need segmental/multi-frequency BIA hardware this single whole-body impedance reading can't
  * provide, and [ScaleMeasurement] has no field for the last one regardless.
+ *
+ * A "plausible" raw impedance is necessary but not sufficient: a real capture at 317.65Ω
+ * (inside [PLAUSIBLE_IMPEDANCE_OHMS]) drove [StandardImpedanceLib]'s linear equations to
+ * fat=-5.1% and a fat-free mass of 90.3kg on an 85.95kg person -- lean mass exceeding total
+ * body weight. [publishFrame] checks the formula's *output* for physical sense (fat%, water%
+ * and fat-free-mass-vs-total-weight) before publishing it, independently of the input-side
+ * impedance guard.
  */
 class HumeDara2Handler : ScaleDeviceHandler() {
 
@@ -118,6 +125,15 @@ class HumeDara2Handler : ScaleDeviceHandler() {
         /** Big-endian impedance ÷100 at bytes[1..2], in ohms. */
         fun impedanceOhmsFromFrame(frame: ByteArray): Double =
             ConverterUtils.fromUnsignedInt16Be(frame, 1) / 100.0
+
+        /**
+         * True when [StandardImpedanceLib]'s output is physically sensible, independent of
+         * whether its input impedance already passed [PLAUSIBLE_IMPEDANCE_OHMS] — see the
+         * class doc comment's real 317.65Ω counter-example (fat=-5.1%, fat-free mass
+         * exceeding total weight) for why the input-side guard alone isn't sufficient.
+         */
+        fun isPlausibleBodyComposition(fatPercent: Double, waterPercent: Double, fatFreeMassKg: Double, weightKg: Double): Boolean =
+            fatPercent in 3.0..55.0 && waterPercent in 30.0..75.0 && fatFreeMassKg in 0.0..weightKg
 
         /** XOR of bytes[0..9]; must equal byte[10]. */
         fun checksum(frame: ByteArray): Int {
@@ -204,6 +220,10 @@ class HumeDara2Handler : ScaleDeviceHandler() {
         val m = ScaleMeasurement().apply { weight = weightKg }
 
         if (impedanceOhms in PLAUSIBLE_IMPEDANCE_OHMS && user.bodyHeight > 0f) {
+            // The impedance reading itself is real, measured data even if the formula
+            // fed by it below turns out unusable -- keep it either way.
+            m.impedance = impedanceOhms
+
             val bia = StandardImpedanceLib(
                 gender = user.gender,
                 age = user.age,
@@ -211,14 +231,30 @@ class HumeDara2Handler : ScaleDeviceHandler() {
                 heightM = user.bodyHeight / 100.0,
                 impedance = impedanceOhms
             )
-            m.impedance = impedanceOhms
-            m.fat = bia.totalFatPercentage.toFloat()
-            m.water = bia.totalBodyWaterPercentage.toFloat()
-            m.muscle = bia.skeletalMusclePercentage.toFloat()
-            m.bone = bia.boneMassKg.toFloat()
-            m.bmr = bia.basalMetabolicRate.toFloat()
-            m.lbm = bia.fatFreeMassKg.toFloat()
-            logD("publish kg=${m.weight} impedance=$impedanceOhms fat=${m.fat} water=${m.water} muscle=${m.muscle} bone=${m.bone} bmr=${m.bmr} lbm=${m.lbm}")
+
+            // openScale's own save path (BleConnector.addConvertedIfValid) already requires
+            // every body-comp field to be > 0, so a negative fat% here would silently vanish
+            // before it ever reached the DB -- checking the formula's OUTPUT ourselves means
+            // we skip cleanly with a log line instead of quietly losing a field two layers
+            // away. See isPlausibleBodyComposition's own doc comment for the real capture
+            // that motivated this.
+            val fatFreeMassKg = bia.fatFreeMassKg
+            val outputsPlausible = isPlausibleBodyComposition(
+                bia.totalFatPercentage, bia.totalBodyWaterPercentage, fatFreeMassKg, weightKg.toDouble()
+            )
+
+            if (outputsPlausible) {
+                m.fat = bia.totalFatPercentage.toFloat()
+                m.water = bia.totalBodyWaterPercentage.toFloat()
+                m.muscle = bia.skeletalMusclePercentage.toFloat()
+                m.bone = bia.boneMassKg.toFloat()
+                m.bmr = bia.basalMetabolicRate.toFloat()
+                m.lbm = fatFreeMassKg.toFloat()
+                logD("publish kg=${m.weight} impedance=$impedanceOhms fat=${m.fat} water=${m.water} muscle=${m.muscle} bone=${m.bone} bmr=${m.bmr} lbm=${m.lbm}")
+            } else {
+                logD("publish kg=${m.weight} impedance=$impedanceOhms: StandardImpedanceLib output implausible " +
+                        "(fat=${bia.totalFatPercentage} water=${bia.totalBodyWaterPercentage} lbm=$fatFreeMassKg vs weight=$weightKg), skipping body composition")
+            }
         } else {
             logD("publish kg=${m.weight} impedance=$impedanceOhms out of plausible range, skipping body composition")
         }

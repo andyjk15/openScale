@@ -24,6 +24,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import dagger.Binds
+import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -35,12 +39,12 @@ import com.health.openscale.core.data.Measurement
 import com.health.openscale.core.data.MeasurementTypeKey
 import com.health.openscale.core.data.MeasurementValue
 import com.health.openscale.core.data.UnitType
+import com.health.openscale.core.di.ApplicationScope
 import com.health.openscale.core.utils.ConverterUtils
 import com.health.openscale.core.utils.LogManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -53,6 +57,22 @@ import java.util.Locale
 import java.util.TimeZone
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * Fire-and-forget entry point [MeasurementCrudUseCases] depends on, so a unit test's DI wiring
+ * (see testutil/RoomTestSupport.kt) can substitute a no-op double instead of the real
+ * [TrackAppSyncUseCase] — which makes a genuine network call. That distinction matters
+ * concretely, not hypothetically: before this interface existed, RoomTestSupport constructed
+ * the real class directly, `trackapp.properties` (gitignored, personal, never empty on this
+ * machine) meant `BuildConfig.TRACKAPP_BASE_URL`/`TRACKAPP_DEVICE_TOKEN` were never blank even
+ * under `testDebugUnitTest`, and a single full test-suite run POSTed a test fixture's
+ * `massG=70000`/epoch timestamp into the owner's REAL production trackapp database. "Fails
+ * silently closed when unconfigured" is not a substitute for "unit tests cannot reach the
+ * network at all" — this interface is what actually guarantees the latter.
+ */
+interface TrackAppSync {
+    fun pushAsync(measurement: Measurement, values: List<MeasurementValue>)
+}
 
 /**
  * Pushes a saved [Measurement] to the owner's own trackapp instance (`POST /api/device/weight`,
@@ -70,23 +90,28 @@ import javax.inject.Singleton
  * [SyncUseCases] Intent-based sync-app pushes, on a short timeout so a bad/absent network
  * connection at weigh-in time can never hang or fail the save itself — a failed push is only
  * ever reported via [showResultNotification], never by throwing back into the caller.
+ *
+ * NOT injected directly anywhere — [MeasurementCrudUseCases] depends on [TrackAppSync], and
+ * [TrackAppSyncBindsModule] is what maps that interface to this implementation in the real app.
+ * See [TrackAppSync]'s own doc comment for why that indirection exists at all.
  */
 @Singleton
 class TrackAppSyncUseCase @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val measurementTypeUseCases: MeasurementTypeCrudUseCases,
-) {
+    @param:ApplicationScope private val scope: CoroutineScope,
+) : TrackAppSync {
     private val TAG = "TrackAppSyncUseCase"
 
-    /** This use case's own scope, not the caller's: [MeasurementCrudUseCases.saveMeasurement]
-     *  must return as soon as the measurement is actually saved, the same way it already does
-     *  for [SyncUseCases]'s Intent-based pushes — a slow/absent network at weigh-in time (a
-     *  bathroom, typically the worst WiFi spot in a home) must never add up to [SYNC_TIMEOUT_MS]
-     *  of latency to that save. [pushAsync] fires this and returns immediately; the result only
-     *  ever surfaces via [showResultNotification]. */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
-    fun pushAsync(measurement: Measurement, values: List<MeasurementValue>) {
+    /** Launched on the app's one shared [ApplicationScope], not the caller's:
+     *  [MeasurementCrudUseCases.saveMeasurement] must return as soon as the measurement is
+     *  actually saved, the same way it already does for [SyncUseCases]'s Intent-based pushes —
+     *  a slow/absent network at weigh-in time (a bathroom, typically the worst WiFi spot in a
+     *  home) must never add up to [SYNC_TIMEOUT_MS] of latency to that save. [pushAsync] fires
+     *  this and returns immediately; the result only ever surfaces via [showResultNotification].
+     *  See [com.health.openscale.core.di.CoroutineScopeModule]'s own doc comment for why this
+     *  must be the shared scope and not a second one of this class's own. */
+    override fun pushAsync(measurement: Measurement, values: List<MeasurementValue>) {
         scope.launch { push(measurement, values) }
     }
 
@@ -233,4 +258,14 @@ class TrackAppSyncUseCase @Inject constructor(
         const val CHANNEL_ID = "trackapp_sync"
         const val NOTIFICATION_ID = 2001
     }
+}
+
+/** Maps [TrackAppSync] to the real, network-calling [TrackAppSyncUseCase] for production —
+ *  see [TrackAppSync]'s own doc comment for why [MeasurementCrudUseCases] depends on the
+ *  interface rather than this class directly. */
+@Module
+@InstallIn(SingletonComponent::class)
+interface TrackAppSyncBindsModule {
+    @Binds
+    fun bindTrackAppSync(impl: TrackAppSyncUseCase): TrackAppSync
 }

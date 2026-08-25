@@ -86,4 +86,35 @@ class HumeDara2HandlerTest {
         }
         assertThat(HumeDara2Handler.isLockedFrame(liveFrame)).isFalse()
     }
+
+    @Test
+    fun `a plausible-impedance reading can still yield impossible body composition`() {
+        // Real capture: 317.65 Ohm (inside PLAUSIBLE_IMPEDANCE_OHMS) drove
+        // StandardImpedanceLib to fat=-5.111843%, water=77.27303%, and a fat-free
+        // mass of 90.34363kg on an 85.95kg person -- lean mass exceeding total
+        // body weight. Every one of the three checks must independently reject it.
+        assertThat(
+            HumeDara2Handler.isPlausibleBodyComposition(
+                fatPercent = -5.111843,
+                waterPercent = 77.27303,
+                fatFreeMassKg = 90.34363,
+                weightKg = 85.95,
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `a genuine real reading passes the plausibility check`() {
+        // Real capture: 445.65 Ohm, 85.8kg -- fat=15.976962%, water=60.69712%,
+        // lbm=72.09177kg, all of which matched Hume's own on-screen numbers
+        // within the accuracy documented in the class doc comment.
+        assertThat(
+            HumeDara2Handler.isPlausibleBodyComposition(
+                fatPercent = 15.976962,
+                waterPercent = 60.69712,
+                fatFreeMassKg = 72.09177,
+                weightKg = 85.8,
+            )
+        ).isTrue()
+    }
 }

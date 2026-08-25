@@ -24,6 +24,8 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
+import com.health.openscale.core.data.Measurement
+import com.health.openscale.core.data.MeasurementValue
 import com.health.openscale.core.database.AppDatabase
 import com.health.openscale.core.database.DatabaseRepository
 import com.health.openscale.core.database.MIGRATION_10_11
@@ -63,6 +65,7 @@ import com.health.openscale.core.usecase.MeasurementTransformationUseCase
 import com.health.openscale.core.usecase.MeasurementTypeCrudUseCases
 import com.health.openscale.core.usecase.ReminderUseCase
 import com.health.openscale.core.usecase.SyncUseCases
+import com.health.openscale.core.usecase.TrackAppSync
 import com.health.openscale.core.usecase.UserGoalsUseCases
 import com.health.openscale.core.usecase.UserUseCases
 import kotlinx.coroutines.CoroutineScope
@@ -250,6 +253,15 @@ object RoomTestSupport {
 
     // --- Facade builders (wire the real production object graph against in-memory Room) ---
 
+    /** No-op stand-in for the real, network-calling TrackAppSyncUseCase — see [TrackAppSync]'s
+     *  own doc comment for the real incident (a test fixture's massG=70000 landing in the
+     *  owner's production database) that this exists to make structurally impossible, not
+     *  merely unlikely. Every [facadesFor]/[measurementCrudFor] caller gets this instead of
+     *  the real implementation; nothing under test/ may construct TrackAppSyncUseCase directly. */
+    private object NoOpTrackAppSync : TrackAppSync {
+        override fun pushAsync(measurement: Measurement, values: List<MeasurementValue>) {}
+    }
+
     /** Real [SettingsFacadeImpl] backed by an isolated test DataStore file (avoids process-singleton cross-talk). */
     fun settingsFacadeFor(scope: CoroutineScope, file: File): SettingsFacadeImpl =
         SettingsFacadeImpl(PreferenceDataStoreFactory.create(scope = scope, produceFile = { file }))
@@ -269,7 +281,8 @@ object RoomTestSupport {
 
         val query = MeasurementQueryUseCases(repo)
         val transformation = MeasurementTransformationUseCase(settings, userUseCases, query)
-        val crud = MeasurementCrudUseCases(app, settings, sync, transformation, repo)
+        val trackAppSync = NoOpTrackAppSync
+        val crud = MeasurementCrudUseCases(app, settings, sync, trackAppSync, transformation, repo)
         val measurementFacade = MeasurementFacade(
             query = query,
             filter = MeasurementFilterUseCases(),
@@ -298,10 +311,12 @@ object RoomTestSupport {
 
     /** Wires the real [MeasurementCrudUseCases] graph (same constructors as production) over [repo]. */
     fun measurementCrudFor(app: Application, repo: DatabaseRepository, settings: SettingsFacade): MeasurementCrudUseCases {
-        val sync = SyncUseCases(app, MeasurementTypeCrudUseCases(repo))
+        val typeCrud = MeasurementTypeCrudUseCases(repo)
+        val sync = SyncUseCases(app, typeCrud)
         val userUseCases = UserUseCases(repo, settings, sync)
         val query = MeasurementQueryUseCases(repo)
         val transformation = MeasurementTransformationUseCase(settings, userUseCases, query)
-        return MeasurementCrudUseCases(app, settings, sync, transformation, repo)
+        val trackAppSync = NoOpTrackAppSync
+        return MeasurementCrudUseCases(app, settings, sync, trackAppSync, transformation, repo)
     }
 }

@@ -27,12 +27,12 @@ import com.health.openscale.core.data.MeasurementTypeIcon
 import com.health.openscale.core.data.MeasurementTypeKey
 import com.health.openscale.core.data.UnitType
 import com.health.openscale.core.database.DatabaseRepository
+import com.health.openscale.core.di.ApplicationScope
 import com.health.openscale.core.facade.SettingsFacade
 import com.health.openscale.core.utils.LogManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -95,8 +95,9 @@ class OpenScaleApp : Application(), Configuration.Provider {
     lateinit var databaseRepository: DatabaseRepository
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
-
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Inject
+    @ApplicationScope
+    lateinit var applicationScope: CoroutineScope
 
     override fun onCreate() {
         super.onCreate()

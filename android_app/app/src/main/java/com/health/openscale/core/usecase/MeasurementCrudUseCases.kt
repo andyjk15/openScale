@@ -45,7 +45,7 @@ class MeasurementCrudUseCases @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val settingsFacade: SettingsFacade,
     private val sync: SyncUseCases,
-    private val trackAppSync: TrackAppSyncUseCase,
+    private val trackAppSync: TrackAppSync,
     private val transformation: MeasurementTransformationUseCase,
     private val databaseRepository: DatabaseRepository
     ) {
