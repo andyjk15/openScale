@@ -10,6 +10,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Health Connect: reads Garmin's step count off the same on-device broker the owner's
+         watch already syncs into; see HealthConnectStepsSyncUseCase's own header. Background
+         read is a SEPARATE grant from READ_STEPS, requested as its own step in the settings UI. -->
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
+
     <permission
         android:name="${applicationId}.READ_WRITE_DATA"
         android:description="@string/permission_read_write_data_description"
@@ -22,6 +28,7 @@
         <package android:name="com.health.openscale.sync.debug" />
         <package android:name="com.health.openscale.sync.oss" />
         <package android:name="com.health.openscale.sync" />
+        <package android:name="com.google.android.apps.healthdata" />
     </queries>
 
     <application
@@ -42,7 +49,28 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Health Connect's own permissions screen links here for the privacy rationale,
+                 Android 13 and below. Reuses MainActivity (already exported) rather than adding
+                 a dedicated Activity; see the activity-alias below for Android 14+. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
         </activity>
+
+        <!-- Android 14+'s own "view permission usage" entry point, required by Health Connect's
+             system dialog regardless of this app never being Play-Store-distributed. Points at
+             MainActivity, same reasoning as the intent-filter on it above. -->
+        <activity-alias
+            android:name=".HealthConnectPermissionsRationaleAlias"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name="androidx.core.content.FileProvider"

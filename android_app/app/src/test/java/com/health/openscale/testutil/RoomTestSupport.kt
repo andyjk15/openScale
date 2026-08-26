@@ -52,6 +52,8 @@ import com.health.openscale.core.service.MeasurementEnricher
 import com.health.openscale.core.service.TrendCalculator
 import com.health.openscale.core.usecase.AutoBackupUseCases
 import com.health.openscale.core.usecase.BackupRestoreUseCases
+import com.health.openscale.core.usecase.HealthConnectStepsSync
+import com.health.openscale.core.usecase.HealthConnectStepsSyncOutcome
 import com.health.openscale.core.usecase.ImportExportUseCases
 import com.health.openscale.core.usecase.MeasurementAggregationUseCase
 import com.health.openscale.core.usecase.MeasurementCrudUseCases
@@ -260,6 +262,17 @@ object RoomTestSupport {
      *  the real implementation; nothing under test/ may construct TrackAppSyncUseCase directly. */
     private object NoOpTrackAppSync : TrackAppSync {
         override fun pushAsync(measurement: Measurement, values: List<MeasurementValue>) {}
+    }
+
+    /** No-op stand-in for the real, network-and-Health-Connect-calling
+     *  HealthConnectStepsSyncUseCase -- same reasoning as [NoOpTrackAppSync] immediately above,
+     *  for a second endpoint. NOT PRIVATE: unlike [NoOpTrackAppSync], which only [facadesFor]/
+     *  [measurementCrudFor] in THIS file construct, HealthConnectStepsSyncWorkerTest (a different
+     *  package) builds HealthConnectStepsSyncWorker directly via WorkerFactory -- mirroring
+     *  BackupWorkerTest's own pattern -- and needs this double at that call site. */
+    object NoOpHealthConnectStepsSync : HealthConnectStepsSync {
+        override suspend fun syncNow(): HealthConnectStepsSyncOutcome =
+            HealthConnectStepsSyncOutcome.NotConfigured
     }
 
     /** Real [SettingsFacadeImpl] backed by an isolated test DataStore file (avoids process-singleton cross-talk). */

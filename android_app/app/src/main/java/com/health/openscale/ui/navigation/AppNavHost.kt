@@ -47,6 +47,8 @@ import com.health.openscale.ui.screen.settings.BluetoothViewModel
 import com.health.openscale.ui.screen.settings.ChartSettingsScreen
 import com.health.openscale.ui.screen.settings.DataManagementSettingsScreen
 import com.health.openscale.ui.screen.settings.GeneralSettingsScreen
+import com.health.openscale.ui.screen.settings.HealthConnectSettingsScreen
+import com.health.openscale.ui.screen.settings.HealthConnectViewModel
 import com.health.openscale.ui.screen.settings.MeasurementTypeDetailScreen
 import com.health.openscale.ui.screen.settings.MeasurementTypeSettingsScreen
 import com.health.openscale.ui.screen.settings.SettingsScreen
@@ -67,7 +69,8 @@ fun AppNavHost(
     innerPadding: PaddingValues,
     sharedViewModel: SharedViewModel,
     settingsViewModel: SettingsViewModel,
-    bluetoothViewModel: BluetoothViewModel
+    bluetoothViewModel: BluetoothViewModel,
+    healthConnectViewModel: HealthConnectViewModel
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         NavHost(
@@ -248,6 +251,12 @@ fun AppNavHost(
             composable(Routes.DATA_MANAGEMENT_SETTINGS) {
                 DataManagementSettingsScreen(
                     settingsViewModel = settingsViewModel
+                )
+            }
+            composable(Routes.HEALTH_CONNECT_SETTINGS) {
+                HealthConnectSettingsScreen(
+                    sharedViewModel = sharedViewModel,
+                    healthConnectViewModel = healthConnectViewModel
                 )
             }
             composable(Routes.ABOUT_SETTINGS) {

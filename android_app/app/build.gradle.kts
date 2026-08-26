@@ -217,6 +217,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.worker)
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.health.connect.client)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 

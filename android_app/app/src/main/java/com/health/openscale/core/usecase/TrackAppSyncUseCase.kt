@@ -49,8 +49,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -83,8 +81,9 @@ interface TrackAppSync {
  * below — see app/build.gradle.kts's own comment on `trackapp.properties` for why those are
  * never committed to source.
  *
- * Only weight and body fat % are sent — trackapp's `WeightEntry` table has no columns for
- * water/muscle/bone/BMR today, so there's nowhere for them to land yet.
+ * Weight, body fat %, and lean mass are sent — `WeightEntry` has columns for exactly those
+ * three (`massG`/`bodyFatBp`/`leanMassG`). Water %, muscle %, bone, and BMR aren't sent:
+ * trackapp has no columns for them today, so there's nowhere for them to land yet.
  *
  * Called from [MeasurementCrudUseCases.saveMeasurement], right alongside the existing
  * [SyncUseCases] Intent-based sync-app pushes, on a short timeout so a bad/absent network
@@ -150,21 +149,29 @@ class TrackAppSyncUseCase @Inject constructor(
             }
         }
 
+        // LBM's allowed units are only KG/LB/ST (never PERCENT), so canonicalValue already
+        // lands it in kg directly — no weight-relative conversion needed, unlike fat above.
+        val lbmType = types.find { it.key == MeasurementTypeKey.LBM }
+        val lbmValue = lbmType?.let { lt -> values.find { it.typeId == lt.id } }
+        val leanMassKg = lbmType?.let { lt -> lbmValue?.let { v -> canonicalValue(v, lt.unit) } }
+
         val massG = Math.round(weightKg * 1000f)
         val bodyFatBp = fatPercent?.let { Math.round(it * 100f) }
+        val leanMassG = leanMassKg?.let { Math.round(it * 1000f) }
         val measuredAt = isoInstant(Date(measurement.timestamp))
 
         val body = JSONObject().apply {
             put("measuredAt", measuredAt)
             put("massG", massG)
-            if (bodyFatBp != null) put("bodyFatBp", bodyFatBp) else put("bodyFatBp", JSONObject.NULL)
+            put("bodyFatBp", bodyFatBp ?: JSONObject.NULL)
+            put("leanMassG", leanMassG ?: JSONObject.NULL)
         }
 
         val success = withTimeoutOrNull(SYNC_TIMEOUT_MS) {
             withContext(Dispatchers.IO) { postWeight(baseUrl, token, body) }
         } ?: false
 
-        LogManager.i(TAG, "trackapp sync ${if (success) "succeeded" else "failed"}: massG=$massG bodyFatBp=$bodyFatBp")
+        LogManager.i(TAG, "trackapp sync ${if (success) "succeeded" else "failed"}: massG=$massG bodyFatBp=$bodyFatBp leanMassG=$leanMassG")
         showResultNotification(success)
     }
 
@@ -183,30 +190,10 @@ class TrackAppSyncUseCase @Inject constructor(
         return ConverterUtils.convertFloatValueUnit(raw, unit, canonicalUnit)
     }
 
-    private fun postWeight(baseUrl: String, token: String, body: JSONObject): Boolean {
-        return try {
-            val url = URL("${baseUrl.trimEnd('/')}/api/device/weight")
-            val connection = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = SYNC_TIMEOUT_MS.toInt()
-                readTimeout = SYNC_TIMEOUT_MS.toInt()
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $token")
-            }
-            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                val errorBody = runCatching { connection.errorStream?.bufferedReader()?.readText() }.getOrNull()
-                LogManager.w(TAG, "trackapp responded $status: $errorBody")
-            }
-            connection.disconnect()
-            status in 200..299
-        } catch (e: Exception) {
-            LogManager.w(TAG, "trackapp push failed: ${e.message}")
-            false
-        }
-    }
+    /** The HTTP mechanics live in [TrackAppHttp.postJson], shared with
+     *  [HealthConnectStepsSyncUseCase]'s identical push to a different endpoint. */
+    private fun postWeight(baseUrl: String, token: String, body: JSONObject): Boolean =
+        TrackAppHttp.postJson(baseUrl, "/api/device/weight", token, body, SYNC_TIMEOUT_MS, TAG)
 
     private fun isoInstant(date: Date): String {
         val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT)

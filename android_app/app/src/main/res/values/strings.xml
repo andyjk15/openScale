@@ -608,6 +608,7 @@
     <string name="settings_item_user">User</string>
     <string name="settings_item_measurement_types">Measurement Types</string>
     <string name="settings_item_bluetooth">Bluetooth</string>
+    <string name="settings_item_health_connect">Health Connect</string>
     <string name="settings_item_chart">Chart</string>
     <string name="settings_item_data_management">Data Management</string>
     <string name="settings_item_about">About</string>
@@ -773,6 +774,26 @@
     <string name="interval_daily">Daily</string>
     <string name="interval_weekly">Weekly</string>
     <string name="interval_monthly">Monthly</string>
+
+    <!-- Health Connect Settings Screen -->
+    <string name="hc_intro_text">Reads your watch\'s step count from Android Health Connect and pushes it to your own trackapp instance, so the /plan page can check it against your daily goal.</string>
+    <string name="hc_toggle_label">Sync steps to trackapp</string>
+    <string name="hc_sync_interval_label">Sync interval</string>
+    <string name="hc_status_label">Status</string>
+    <string name="hc_dialog_title_select_interval">Select Sync Interval</string>
+    <string name="hc_status_not_installed">Health Connect is not installed on this device</string>
+    <string name="hc_status_disabled">Sync is off</string>
+    <string name="hc_status_never_synced">Never synced</string>
+    <string name="hc_status_last_synced">Last synced: %1$s</string>
+    <string name="hc_status_failed">Sync failed on %1$s: %2$s</string>
+    <string name="hc_status_next_sync">Next sync: %1$s</string>
+    <string name="hc_interval_hourly">Hourly</string>
+    <string name="hc_interval_every_2_hours">Every 2 hours</string>
+    <string name="hc_interval_every_4_hours">Every 4 hours</string>
+    <string name="hc_interval_every_6_hours">Every 6 hours</string>
+    <string name="hc_error_unavailable">Health Connect could not be reached</string>
+    <string name="hc_error_permissions_not_granted">Steps permission was not granted</string>
+    <string name="hc_error_push_failed">Could not reach trackapp</string>
 
     <!-- Data Management Dialog Titles -->
     <string name="dialog_title_export_select_user">Export: Select User</string>

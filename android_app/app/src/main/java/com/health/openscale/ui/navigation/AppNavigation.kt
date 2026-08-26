@@ -94,6 +94,7 @@ import com.health.openscale.ui.shared.SharedViewModel
 import com.health.openscale.ui.screen.dialog.AssistedWeighingDialog
 import com.health.openscale.ui.screen.dialog.BluetoothUserInteractionDialog
 import com.health.openscale.ui.screen.settings.BluetoothViewModel
+import com.health.openscale.ui.screen.settings.HealthConnectViewModel
 import com.health.openscale.ui.screen.settings.SettingsViewModel
 import com.health.openscale.ui.theme.AppBrandBlue
 import kotlinx.coroutines.FlowPreview
@@ -127,6 +128,8 @@ fun AppNavigation(sharedViewModel: SharedViewModel) {
     val settingsViewModel: SettingsViewModel = hiltViewModel()
 
     val bluetoothViewModel: BluetoothViewModel = hiltViewModel()
+
+    val healthConnectViewModel: HealthConnectViewModel = hiltViewModel()
 
     // Observe the current navigation route
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
@@ -402,7 +405,8 @@ fun AppNavigation(sharedViewModel: SharedViewModel) {
                 innerPadding = innerPadding,
                 sharedViewModel = sharedViewModel,
                 settingsViewModel = settingsViewModel,
-                bluetoothViewModel = bluetoothViewModel
+                bluetoothViewModel = bluetoothViewModel,
+                healthConnectViewModel = healthConnectViewModel
             )
         }
     }

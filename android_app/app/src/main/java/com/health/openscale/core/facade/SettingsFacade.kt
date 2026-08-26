@@ -36,6 +36,8 @@ import com.health.openscale.core.data.AutoBackupError
 import com.health.openscale.core.data.BackupInterval
 import com.health.openscale.core.data.BodyFatFormulaOption
 import com.health.openscale.core.data.BodyWaterFormulaOption
+import com.health.openscale.core.data.HealthConnectStepsError
+import com.health.openscale.core.data.HealthConnectSyncInterval
 import com.health.openscale.core.data.LbmFormulaOption
 import com.health.openscale.core.data.SmoothingAlgorithm
 import com.health.openscale.core.service.ScannedDeviceInfo
@@ -114,6 +116,13 @@ object SettingsPreferenceKeys {
     val AUTO_BACKUP_LAST_SUCCESSFUL_TIMESTAMP = longPreferencesKey("auto_backup_last_successful_timestamp")
     val AUTO_BACKUP_LAST_ERROR = stringPreferencesKey("auto_backup_last_error")
     val AUTO_BACKUP_LAST_ERROR_TIMESTAMP = longPreferencesKey("auto_backup_last_error_timestamp")
+
+    // --- Settings for Health Connect steps sync ---
+    val HEALTH_CONNECT_STEPS_ENABLED = booleanPreferencesKey("health_connect_steps_enabled")
+    val HEALTH_CONNECT_STEPS_INTERVAL = stringPreferencesKey("health_connect_steps_interval")
+    val HEALTH_CONNECT_STEPS_LAST_SUCCESSFUL_TIMESTAMP = longPreferencesKey("health_connect_steps_last_successful_timestamp")
+    val HEALTH_CONNECT_STEPS_LAST_ERROR = stringPreferencesKey("health_connect_steps_last_error")
+    val HEALTH_CONNECT_STEPS_LAST_ERROR_TIMESTAMP = longPreferencesKey("health_connect_steps_last_error_timestamp")
 
     // --- Reminder Settings ---
     val REMINDER_ENABLED = booleanPreferencesKey("reminder_enabled")
@@ -260,6 +269,21 @@ interface SettingsFacade {
     val autoBackupLastError: Flow<AutoBackupError?>
     val autoBackupLastErrorTimestamp: Flow<Long>
     suspend fun setAutoBackupLastError(error: AutoBackupError?)
+
+    // --- Health Connect steps sync Settings ---
+    val healthConnectStepsEnabled: Flow<Boolean>
+    suspend fun setHealthConnectStepsEnabled(enabled: Boolean)
+
+    val healthConnectStepsInterval: Flow<HealthConnectSyncInterval>
+    suspend fun setHealthConnectStepsInterval(interval: HealthConnectSyncInterval)
+
+    val healthConnectStepsLastSuccessfulTimestamp: Flow<Long>
+    suspend fun setHealthConnectStepsLastSuccessfulTimestamp(timestamp: Long)
+
+    /** Reason of the most recent failed sync attempt, or null if the last attempt succeeded. */
+    val healthConnectStepsLastError: Flow<HealthConnectStepsError?>
+    val healthConnectStepsLastErrorTimestamp: Flow<Long>
+    suspend fun setHealthConnectStepsLastError(error: HealthConnectStepsError?)
 
     // --- Reminder Settings ---
     val reminderEnabled: Flow<Boolean>
@@ -937,6 +961,98 @@ class SettingsFacadeImpl @Inject constructor(
             } else {
                 preferences.remove(SettingsPreferenceKeys.AUTO_BACKUP_LAST_ERROR)
                 preferences.remove(SettingsPreferenceKeys.AUTO_BACKUP_LAST_ERROR_TIMESTAMP)
+            }
+        }
+    }
+
+    override val healthConnectStepsEnabled: Flow<Boolean> = observeSetting(
+        SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_ENABLED.name,
+        false
+    ).catch { exception ->
+        LogManager.e(TAG, "Error observing healthConnectStepsEnabled", exception)
+        emit(false)
+    }
+
+    override suspend fun setHealthConnectStepsEnabled(enabled: Boolean) {
+        LogManager.d(TAG, "Setting healthConnectStepsEnabled to: $enabled")
+        saveSetting(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_ENABLED.name, enabled)
+    }
+
+    override val healthConnectStepsInterval: Flow<HealthConnectSyncInterval> = dataStore.data
+        .catch { exception ->
+            LogManager.e(TAG, "Error reading healthConnectStepsInterval from DataStore.", exception)
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            val intervalName = preferences[SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_INTERVAL]
+            try {
+                intervalName?.let { HealthConnectSyncInterval.valueOf(it) } ?: HealthConnectSyncInterval.EVERY_4_HOURS
+            } catch (e: IllegalArgumentException) {
+                LogManager.w(TAG, "Invalid HealthConnectSyncInterval name '$intervalName' in DataStore. Defaulting to EVERY_4_HOURS.", e)
+                HealthConnectSyncInterval.EVERY_4_HOURS
+            }
+        }
+        .distinctUntilChanged()
+
+    override suspend fun setHealthConnectStepsInterval(interval: HealthConnectSyncInterval) {
+        LogManager.d(TAG, "Setting healthConnectStepsInterval to: ${interval.name}")
+        saveSetting(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_INTERVAL.name, interval.name)
+    }
+
+    override val healthConnectStepsLastSuccessfulTimestamp: Flow<Long> = observeSetting(
+        SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_SUCCESSFUL_TIMESTAMP.name,
+        0L
+    ).catch { exception ->
+        LogManager.e(TAG, "Error observing healthConnectStepsLastSuccessfulTimestamp", exception)
+        emit(0L)
+    }
+
+    override suspend fun setHealthConnectStepsLastSuccessfulTimestamp(timestamp: Long) {
+        LogManager.d(TAG, "Setting healthConnectStepsLastSuccessfulTimestamp to: $timestamp")
+        saveSetting(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_SUCCESSFUL_TIMESTAMP.name, timestamp)
+    }
+
+    override val healthConnectStepsLastError: Flow<HealthConnectStepsError?> = dataStore.data
+        .catch { exception ->
+            LogManager.e(TAG, "Error reading healthConnectStepsLastError from DataStore.", exception)
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            val errorName = preferences[SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_ERROR]
+            try {
+                errorName?.let { HealthConnectStepsError.valueOf(it) }
+            } catch (e: IllegalArgumentException) {
+                LogManager.w(TAG, "Invalid HealthConnectStepsError name '$errorName' in DataStore.", e)
+                HealthConnectStepsError.PUSH_FAILED
+            }
+        }
+        .distinctUntilChanged()
+
+    override val healthConnectStepsLastErrorTimestamp: Flow<Long> = observeSetting(
+        SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_ERROR_TIMESTAMP.name,
+        0L
+    ).catch { exception ->
+        LogManager.e(TAG, "Error observing healthConnectStepsLastErrorTimestamp", exception)
+        emit(0L)
+    }
+
+    override suspend fun setHealthConnectStepsLastError(error: HealthConnectStepsError?) {
+        LogManager.d(TAG, "Setting healthConnectStepsLastError to: ${error?.name ?: "none"}")
+        dataStore.edit { preferences ->
+            if (error != null) {
+                preferences[SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_ERROR] = error.name
+                preferences[SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_ERROR_TIMESTAMP] = System.currentTimeMillis()
+            } else {
+                preferences.remove(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_ERROR)
+                preferences.remove(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_ERROR_TIMESTAMP)
             }
         }
     }

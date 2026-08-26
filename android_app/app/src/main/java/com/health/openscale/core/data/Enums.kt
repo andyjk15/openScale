@@ -589,6 +589,53 @@ enum class BackupInterval {
 }
 
 /**
+ * How often [com.health.openscale.core.worker.HealthConnectStepsSyncWorker] re-reads and pushes
+ * the day's step total. [BackupInterval]'s own DAILY/WEEKLY/MONTHLY is deliberately NOT reused --
+ * confirmed too coarse for step freshness, where the whole point is /plan's cardio summary
+ * showing a number from a few hours ago rather than yesterday's.
+ */
+enum class HealthConnectSyncInterval {
+    HOURLY,
+    EVERY_2_HOURS,
+    EVERY_4_HOURS,
+    EVERY_6_HOURS,
+    DAILY;
+
+    fun getDisplayName(context: Context): String {
+        return when (this) {
+            HOURLY -> context.getString(R.string.hc_interval_hourly)
+            EVERY_2_HOURS -> context.getString(R.string.hc_interval_every_2_hours)
+            EVERY_4_HOURS -> context.getString(R.string.hc_interval_every_4_hours)
+            EVERY_6_HOURS -> context.getString(R.string.hc_interval_every_6_hours)
+            DAILY -> context.getString(R.string.interval_daily)
+        }
+    }
+}
+
+/**
+ * Reason why the last Health Connect steps sync attempt failed. Mirrors [AutoBackupError]'s own
+ * shape and the same persisted-by-name rule.
+ *
+ * NOT_CONFIGURED is deliberately absent -- see
+ * [com.health.openscale.core.usecase.HealthConnectStepsSyncOutcome.NotConfigured]'s own doc
+ * comment: an unconfigured `trackapp.properties` is not a fault to report, so
+ * [com.health.openscale.core.worker.HealthConnectStepsSyncWorker] never writes this column for it.
+ */
+enum class HealthConnectStepsError {
+    HEALTH_CONNECT_UNAVAILABLE,
+    PERMISSIONS_NOT_GRANTED,
+    PUSH_FAILED;
+
+    fun getDisplayName(context: Context): String {
+        return when (this) {
+            HEALTH_CONNECT_UNAVAILABLE -> context.getString(R.string.hc_error_unavailable)
+            PERMISSIONS_NOT_GRANTED -> context.getString(R.string.hc_error_permissions_not_granted)
+            PUSH_FAILED -> context.getString(R.string.hc_error_push_failed)
+        }
+    }
+}
+
+/**
  * Reason why the last automatic backup attempt failed.
  *
  * Persisted by name, so entries must not be renamed without a migration.
