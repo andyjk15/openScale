@@ -121,6 +121,8 @@ object SettingsPreferenceKeys {
     val HEALTH_CONNECT_STEPS_ENABLED = booleanPreferencesKey("health_connect_steps_enabled")
     val HEALTH_CONNECT_STEPS_INTERVAL = stringPreferencesKey("health_connect_steps_interval")
     val HEALTH_CONNECT_STEPS_LAST_SUCCESSFUL_TIMESTAMP = longPreferencesKey("health_connect_steps_last_successful_timestamp")
+    val HEALTH_CONNECT_STEPS_BACKFILL_DONE = booleanPreferencesKey("health_connect_steps_backfill_done")
+    val HEALTH_CONNECT_STEPS_BACKFILL_ATTEMPTS = intPreferencesKey("health_connect_steps_backfill_attempts")
     val HEALTH_CONNECT_STEPS_LAST_ERROR = stringPreferencesKey("health_connect_steps_last_error")
     val HEALTH_CONNECT_STEPS_LAST_ERROR_TIMESTAMP = longPreferencesKey("health_connect_steps_last_error_timestamp")
 
@@ -279,6 +281,13 @@ interface SettingsFacade {
 
     val healthConnectStepsLastSuccessfulTimestamp: Flow<Long>
     suspend fun setHealthConnectStepsLastSuccessfulTimestamp(timestamp: Long)
+
+    /** One-time steps backfill state (TA-356). */
+    val healthConnectStepsBackfillDone: Flow<Boolean>
+    suspend fun setHealthConnectStepsBackfillDone(done: Boolean)
+
+    val healthConnectStepsBackfillAttempts: Flow<Int>
+    suspend fun setHealthConnectStepsBackfillAttempts(attempts: Int)
 
     /** Reason of the most recent failed sync attempt, or null if the last attempt succeeded. */
     val healthConnectStepsLastError: Flow<HealthConnectStepsError?>
@@ -1014,6 +1023,32 @@ class SettingsFacadeImpl @Inject constructor(
     override suspend fun setHealthConnectStepsLastSuccessfulTimestamp(timestamp: Long) {
         LogManager.d(TAG, "Setting healthConnectStepsLastSuccessfulTimestamp to: $timestamp")
         saveSetting(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_LAST_SUCCESSFUL_TIMESTAMP.name, timestamp)
+    }
+
+    override val healthConnectStepsBackfillDone: Flow<Boolean> = observeSetting(
+        SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_BACKFILL_DONE.name,
+        false
+    ).catch { exception ->
+        LogManager.e(TAG, "Error observing healthConnectStepsBackfillDone", exception)
+        emit(false)
+    }
+
+    override suspend fun setHealthConnectStepsBackfillDone(done: Boolean) {
+        LogManager.d(TAG, "Setting healthConnectStepsBackfillDone to: $done")
+        saveSetting(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_BACKFILL_DONE.name, done)
+    }
+
+    override val healthConnectStepsBackfillAttempts: Flow<Int> = observeSetting(
+        SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_BACKFILL_ATTEMPTS.name,
+        0
+    ).catch { exception ->
+        LogManager.e(TAG, "Error observing healthConnectStepsBackfillAttempts", exception)
+        emit(0)
+    }
+
+    override suspend fun setHealthConnectStepsBackfillAttempts(attempts: Int) {
+        LogManager.d(TAG, "Setting healthConnectStepsBackfillAttempts to: $attempts")
+        saveSetting(SettingsPreferenceKeys.HEALTH_CONNECT_STEPS_BACKFILL_ATTEMPTS.name, attempts)
     }
 
     override val healthConnectStepsLastError: Flow<HealthConnectStepsError?> = dataStore.data

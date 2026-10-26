@@ -24,8 +24,8 @@ import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.health.openscale.BuildConfig
+import com.health.openscale.core.facade.SettingsFacade
 import com.health.openscale.core.utils.LogManager
-import com.health.openscale.core.utils.LondonTime
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -90,16 +90,17 @@ interface HealthConnectStepsSync {
  * `dataOriginFilter = setOf(DataOrigin("com.garmin.android.apps.connectmobile"))` on the
  * [AggregateRequest] below rather than guessing it is needed up front.
  *
- * WINDOW: London midnight (via [LondonTime], NOT the device's own timezone -- see that object's
- * own header) through "now". Every call re-reads the WHOLE day rather than an incremental slice,
- * because Health Connect's own aggregate is already a running total and trackapp's
- * `/api/device/steps` upserts on (source, day) -- there is no partial-window state to track
- * between runs.
+ * WINDOW: each run re-reads today ([London midnight, now], via [com.health.openscale.core.utils.LondonTime],
+ * NOT the device's timezone) plus the 6 previous full London days, one aggregate + one POST per
+ * day (7 + <=7). Trackapp's `/api/device/steps` upserts on (source, day), so re-pushing is safe
+ * and late-syncing Garmin data corrects earlier days. A one-time backfill from 2026-08-26
+ * (see [RollingStepsSync]) adds 55 aggregates + <=55 POSTs.
  */
 @Singleton
 class HealthConnectStepsSyncUseCase @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val clock: Clock,
+    private val settings: SettingsFacade,
 ) : HealthConnectStepsSync {
     private val TAG = "HealthConnectStepsSyncUseCase"
 
@@ -123,36 +124,27 @@ class HealthConnectStepsSyncUseCase @Inject constructor(
             return HealthConnectStepsSyncOutcome.PermissionsNotGranted
         }
 
-        val windowEnd = clock.instant()
-        val windowStart = LondonTime.londonMidnightInstant(clock)
-
-        val steps = try {
+        val reader = StepsDayReader { start, end ->
             val response = client.aggregate(
                 AggregateRequest(
                     metrics = setOf(StepsRecord.COUNT_TOTAL),
-                    timeRangeFilter = TimeRangeFilter.between(windowStart, windowEnd),
+                    timeRangeFilter = TimeRangeFilter.between(start, end),
                     // dataOriginFilter = setOf(DataOrigin("com.garmin.android.apps.connectmobile")),
                 )
             )
-            (response[StepsRecord.COUNT_TOTAL] ?: 0L).toInt()
-        } catch (e: Exception) {
-            LogManager.w(TAG, "Health Connect aggregate read failed: ${e.message}")
-            return HealthConnectStepsSyncOutcome.HealthConnectUnavailable
+            response[StepsRecord.COUNT_TOTAL]
         }
-
-        val body = JSONObject().apply {
-            put("windowStart", windowStart.toString()) // Instant.toString() is already ISO-8601 'Z'
-            put("windowEnd", windowEnd.toString())
-            put("steps", steps)
+        val pusher = StepsPusher { start, end, steps ->
+            val body = JSONObject().apply {
+                put("windowStart", start.toString()) // Instant.toString() is already ISO-8601 'Z'
+                put("windowEnd", end.toString())
+                put("steps", steps)
+            }
+            val ok = TrackAppHttp.postJson(baseUrl, "/api/device/steps", token, body, SYNC_TIMEOUT_MS, TAG)
+            LogManager.i(TAG, "trackapp steps push ${if (ok) "succeeded" else "failed"}: $start steps=$steps")
+            ok
         }
-
-        val success = TrackAppHttp.postJson(baseUrl, "/api/device/steps", token, body, SYNC_TIMEOUT_MS, TAG)
-        LogManager.i(TAG, "trackapp steps sync ${if (success) "succeeded" else "failed"}: steps=$steps")
-        return if (success) {
-            HealthConnectStepsSyncOutcome.Success(steps)
-        } else {
-            HealthConnectStepsSyncOutcome.PushFailed
-        }
+        return RollingStepsSync(reader, pusher, settings, clock).run()
     }
 
     companion object {

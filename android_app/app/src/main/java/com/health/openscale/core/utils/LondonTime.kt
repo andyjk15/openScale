@@ -19,6 +19,7 @@ package com.health.openscale.core.utils
 
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 
 /**
@@ -44,4 +45,29 @@ object LondonTime {
      */
     fun londonMidnightInstant(clock: Clock): Instant =
         clock.instant().atZone(LONDON).toLocalDate().atStartOfDay(LONDON).toInstant()
+
+    /** [days] London days ending today, oldest first. Today = [London midnight, now]. */
+    fun rollingWindows(clock: Clock, days: Int = 7): List<DayWindow> {
+        val now = clock.instant()
+        val today = now.atZone(LONDON).toLocalDate()
+        return (days - 1 downTo 0).map { back ->
+            val d = today.minusDays(back.toLong())
+            if (back == 0) DayWindow(d, d.atStartOfDay(LONDON).toInstant(), now, true)
+            else DayWindow(d, d.atStartOfDay(LONDON).toInstant(), d.plusDays(1).atStartOfDay(LONDON).toInstant(), false)
+        }
+    }
+
+    /** Whole London days [from]..[toInclusive], oldest first; empty if from > toInclusive. */
+    fun fullDayWindows(from: LocalDate, toInclusive: LocalDate): List<DayWindow> {
+        val out = ArrayList<DayWindow>()
+        var d = from
+        while (!d.isAfter(toInclusive)) {
+            out.add(DayWindow(d, d.atStartOfDay(LONDON).toInstant(), d.plusDays(1).atStartOfDay(LONDON).toInstant(), false))
+            d = d.plusDays(1)
+        }
+        return out
+    }
 }
+
+/** One London-calendar-day slice. [end] is "now" for today, next London midnight otherwise. */
+data class DayWindow(val day: LocalDate, val start: Instant, val end: Instant, val isToday: Boolean)
