@@ -22,6 +22,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import com.health.openscale.core.facade.SettingsFacadeImpl
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -54,8 +55,8 @@ import java.time.ZoneOffset
  *    `healthConnectStepsBackfillAttempts: Flow<Int>` + `setHealthConnectStepsBackfillAttempts(Int)`.
  *
  * Fixed clock throughout: 2026-10-26T21:00Z. Rolling 7 = London days 10-20 .. 10-26. Backfill =
- * 2026-08-26 .. 2026-10-19 = 55 days. Push ORDER is oldest window first, today last, with the
- * backfill days (when due) before the rolling days.
+ * 2026-08-26 .. 2026-10-19 = 55 days. Push ORDER (TA-376): the rolling 7 FIRST (oldest window
+ * first, today last), then the backfill days (when due), oldest first.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -220,18 +221,17 @@ class RollingStepsSyncTest {
 
         val out = engine(reader, pusher, settings).run()
 
-        // 55 backfill days + 7 rolling
+        // 7 rolling + 55 backfill days (TA-376: rolling FIRST, backfill after)
         assertThat(pusher.pushes).hasSize(62)
         assertThat(reader.calls).hasSize(62)
-        // first = London 2026-08-26 (BST, so 25 Aug 23:00Z); full day, ends next London midnight
-        assertThat(pusher.pushes.first().start).isEqualTo(Instant.parse("2026-08-25T23:00:00Z"))
-        assertThat(pusher.pushes.first().end).isEqualTo(Instant.parse("2026-08-26T23:00:00Z"))
-        // last backfill day = London 2026-10-19 (today - 7), right before the rolling 7 begins
-        assertThat(pusher.pushes[54].start).isEqualTo(Instant.parse("2026-10-18T23:00:00Z"))
-        assertThat(pusher.pushes[54].end).isEqualTo(Instant.parse("2026-10-19T23:00:00Z"))
-        assertThat(pusher.pushes[55].start).isEqualTo(rollingStarts.first())
-        // last push of the run is today
-        assertThat(pusher.pushes.last()).isEqualTo(Push(todayStart, now, 5000))
+        assertThat(pusher.pushes.take(7).map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+        assertThat(pusher.pushes[6]).isEqualTo(Push(todayStart, now, 5000))
+        // first backfill push = London 2026-08-26 (BST, so 25 Aug 23:00Z); full day, ends next London midnight
+        assertThat(pusher.pushes[7].start).isEqualTo(Instant.parse("2026-08-25T23:00:00Z"))
+        assertThat(pusher.pushes[7].end).isEqualTo(Instant.parse("2026-08-26T23:00:00Z"))
+        // last backfill day = London 2026-10-19 (today - 7), the last push of the run
+        assertThat(pusher.pushes.last().start).isEqualTo(Instant.parse("2026-10-18T23:00:00Z"))
+        assertThat(pusher.pushes.last().end).isEqualTo(Instant.parse("2026-10-19T23:00:00Z"))
         assertThat(out).isEqualTo(HealthConnectStepsSyncOutcome.Success(5000))
         assertThat(settings.healthConnectStepsBackfillDone.first()).isTrue()
     }
@@ -292,14 +292,15 @@ class RollingStepsSyncTest {
     }
 
     @Test
-    fun w4_aFailedBackfillPush_leavesTheFlagUnset_andIsPushFailed() = runBlocking {
+    fun w4_aFailedBackfillPush_leavesTheFlagUnset_butDoesNotChangeTheRollingOutcome() = runBlocking {
         val settings = newSettings()
         val reader = FakeReader { _, _ -> 5000L }
         val pusher = FakePusher { start -> start != sep15Start }
 
         val out = engine(reader, pusher, settings).run()
 
-        assertThat(out).isEqualTo(HealthConnectStepsSyncOutcome.PushFailed)
+        // TA-376: the outcome is derived from the rolling 7 only; a backfill failure never changes it
+        assertThat(out).isEqualTo(HealthConnectStepsSyncOutcome.Success(5000))
         assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
         assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(1)
     }
@@ -325,6 +326,139 @@ class RollingStepsSyncTest {
         assertThat(pusher.pushes).hasSize(7)
         assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(3)
         assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
+    }
+
+    // ---------------------------------------------------------------- TA-376 (ARGUS TA-357)
+    // A crash/cancel mid-backfill can't loop forever or starve the rolling 7.
+
+    /** Runs the engine and reports whether it propagated a CancellationException (it must). */
+    private suspend fun runPropagatesCancellation(e: RollingStepsSync): Boolean =
+        try { e.run(); false } catch (c: CancellationException) { true }
+
+    private val cancelledAtSep15Read = { start: Instant, _: Instant ->
+        if (start == sep15Start) throw CancellationException("worker stopped") else 5000L
+    }
+
+    @Test
+    fun ta376_a_readerCancelledDuringBackfill_consumesOneAttempt_flagUnset_rollingAlreadyPushed() = runBlocking {
+        val settings = newSettings()
+        val pusher = FakePusher()
+
+        val propagated = runPropagatesCancellation(engine(FakeReader(cancelledAtSep15Read), pusher, settings))
+
+        assertThat(propagated).isTrue() // cancellation is rethrown, never swallowed
+        assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(1)
+        assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
+        // the rolling 7 went out BEFORE the backfill was cut short
+        assertThat(pusher.pushes.take(7).map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+        assertThat(pusher.pushes.map { it.start }).doesNotContain(sep15Start)
+    }
+
+    @Test
+    fun ta376_a_pusherCancelledDuringBackfill_consumesOneAttempt_flagUnset_rollingAlreadyPushed() = runBlocking {
+        val settings = newSettings()
+        val pusher = object : StepsPusher {
+            val pushes = mutableListOf<Push>()
+            override suspend fun push(windowStart: Instant, windowEnd: Instant, steps: Int): Boolean {
+                if (windowStart == sep15Start) throw CancellationException("worker stopped")
+                pushes += Push(windowStart, windowEnd, steps)
+                return true
+            }
+        }
+
+        val propagated = runPropagatesCancellation(engine(FakeReader { _, _ -> 5000L }, pusher, settings))
+
+        assertThat(propagated).isTrue()
+        assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(1)
+        assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
+        assertThat(pusher.pushes.take(7).map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+    }
+
+    @Test
+    fun ta376_a_attemptIsPersistedBeforeTheFirstBackfillRead() = runBlocking {
+        val settings = newSettings()
+        var attemptsSeenAtFirstBackfillRead: Int? = null
+        val reader = FakeReader { start, _ ->
+            if (attemptsSeenAtFirstBackfillRead == null && start < rollingStarts.first()) {
+                attemptsSeenAtFirstBackfillRead = runBlocking { settings.healthConnectStepsBackfillAttempts.first() }
+            }
+            5000L
+        }
+
+        engine(reader, FakePusher(), settings).run()
+
+        assertThat(attemptsSeenAtFirstBackfillRead).isEqualTo(1) // +1 was already stored when the backfill began
+        // a clean finish sets Done and clears nothing: the consumed attempt stays on the books
+        assertThat(settings.healthConnectStepsBackfillDone.first()).isTrue()
+        assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(1)
+    }
+
+    @Test
+    fun ta376_a_cancelledDuringTheRolling7_doesNotConsumeABackfillAttempt() = runBlocking {
+        val settings = newSettings()
+        val cancelOnToday = FakeReader { start, _ ->
+            if (start == todayStart) throw CancellationException("worker stopped") else 5000L
+        }
+
+        val propagated = runPropagatesCancellation(engine(cancelOnToday, FakePusher(), settings))
+
+        assertThat(propagated).isTrue()
+        assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(0) // backfill never started
+        assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
+    }
+
+    @Test
+    fun ta376_b_afterThreeCancelledRuns_theBackfillIsNotAttemptedAgain() = runBlocking {
+        val settings = newSettings()
+
+        repeat(3) {
+            assertThat(runPropagatesCancellation(engine(FakeReader(cancelledAtSep15Read), FakePusher(), settings))).isTrue()
+        }
+        assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(3)
+        assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
+
+        // 4th run: everything would now read fine, but only the rolling 7 is touched
+        val reader = FakeReader { _, _ -> 5000L }
+        val pusher = FakePusher()
+        val out = engine(reader, pusher, settings).run()
+
+        assertThat(reader.calls.map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+        assertThat(pusher.pushes.map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+        assertThat(out).isEqualTo(HealthConnectStepsSyncOutcome.Success(5000))
+        assertThat(settings.healthConnectStepsBackfillAttempts.first()).isEqualTo(3)
+        assertThat(settings.healthConnectStepsBackfillDone.first()).isFalse()
+    }
+
+    @Test
+    fun ta376_c_rollingReadsAndPushesAllHappenBeforeAnyBackfillRead_orPush() = runBlocking {
+        val settings = newSettings()
+        val reader = FakeReader { _, _ -> 5000L }
+        val pusher = FakePusher()
+
+        engine(reader, pusher, settings).run()
+
+        val rolling = rollingStarts.toSet()
+        // pushes: positions 0..6 are the rolling 7, every later push is a backfill day
+        assertThat(pusher.pushes.take(7).map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+        assertThat(pusher.pushes.drop(7).map { it.start }.filter { it in rolling }).isEmpty()
+        assertThat(pusher.pushes.drop(7)).hasSize(55)
+        // reads: same split, so a cancel during any backfill read still leaves the rolling 7 pushed
+        assertThat(reader.calls.take(7).map { it.start }).containsExactlyElementsIn(rollingStarts).inOrder()
+        assertThat(reader.calls.drop(7).map { it.start }.filter { it in rolling }).isEmpty()
+    }
+
+    @Test
+    fun ta376_c_aBackfillThatThrowsOrFailsToPush_neverChangesTheRollingOutcome() = runBlocking {
+        val throwing = engine(
+            FakeReader { start, _ -> if (start == sep15Start) throw IllegalStateException("refused") else 5000L },
+            FakePusher(), newSettings(),
+        ).run()
+        val failedPush = engine(
+            FakeReader { _, _ -> 5000L }, FakePusher { start -> start != sep15Start }, newSettings(),
+        ).run()
+
+        assertThat(throwing).isEqualTo(HealthConnectStepsSyncOutcome.Success(5000))
+        assertThat(failedPush).isEqualTo(HealthConnectStepsSyncOutcome.Success(5000))
     }
 
     // ---------------------------------------------------------------- W5
