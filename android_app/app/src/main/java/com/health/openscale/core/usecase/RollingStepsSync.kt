@@ -38,8 +38,10 @@ fun interface StepsPusher {
 }
 
 /**
- * Re-reads today plus the 6 previous London days every run, and performs a one-time backfill
- * from [BACKFILL_FROM] (up to [MAX_BACKFILL_ATTEMPTS] tries). Pure seam-driven so it is testable
+ * Re-reads today plus the 6 previous London days every run (rolling 7 first; the returned outcome
+ * depends on them only), then performs a one-time backfill from [BACKFILL_FROM] (up to
+ * [MAX_BACKFILL_ATTEMPTS] tries). The attempt is persisted before the backfill starts, so a
+ * cancel or kill mid-backfill still consumes it. Pure seam-driven so it is testable
  * without Health Connect or the network.
  */
 class RollingStepsSync(
@@ -77,24 +79,28 @@ class RollingStepsSync(
             val steps = (raw ?: 0L).toInt()
             if (w.isToday) todaySteps = steps
             if (!pusher.push(w.start, w.end, steps)) {
-                pushFailed = true
-                if (isBackfill) backfillClean = false
+                if (isBackfill) backfillClean = false else pushFailed = true
             }
         }
 
-        backfill.forEach { process(it, true) }
+        // Rolling 7 first: the outcome depends on these alone.
         rolling.forEach { process(it, false) }
 
-        if (backfillDue) {
-            if (backfillClean) settings.setHealthConnectStepsBackfillDone(true)
-            else settings.setHealthConnectStepsBackfillAttempts(attempts + 1)
-        }
-
-        return when {
+        val outcome = when {
             readFailed -> HealthConnectStepsSyncOutcome.HealthConnectUnavailable
             pushFailed -> HealthConnectStepsSyncOutcome.PushFailed
             else -> HealthConnectStepsSyncOutcome.Success(todaySteps)
         }
+
+        if (backfillDue) {
+            // Persist the attempt before the first backfill read so a cancel/kill mid-backfill
+            // still consumes it (bounded retries). Not before the rolling 7: a cancel there is free.
+            settings.setHealthConnectStepsBackfillAttempts(attempts + 1)
+            backfill.forEach { process(it, true) }
+            if (backfillClean) settings.setHealthConnectStepsBackfillDone(true)
+        }
+
+        return outcome
     }
 
     companion object {
